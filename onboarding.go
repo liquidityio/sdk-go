@@ -1,9 +1,15 @@
 package sdk
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"mime/multipart"
+	"net/http"
+	"os"
+	"path/filepath"
 )
 
 // OnboardingClient wraps the BD onboarding pipeline.
@@ -131,4 +137,109 @@ func (o *OnboardingClient) Submit(ctx context.Context, appID string) (*Applicati
 		return nil, fmt.Errorf("decode: %w", err)
 	}
 	return &app, nil
+}
+
+// ImportJob is the response from a bulk import.
+type ImportJob struct {
+	ImportID  string `json:"import_id"`
+	Status    string `json:"status"`
+	Count     int    `json:"count"`
+	Processed int    `json:"processed"`
+	Succeeded int    `json:"succeeded"`
+	Failed    int    `json:"failed"`
+}
+
+// ImportZip uploads a zip file for bulk onboarding.
+func (o *OnboardingClient) ImportZip(ctx context.Context, zipPath string) (*ImportJob, error) {
+	f, err := os.Open(zipPath)
+	if err != nil {
+		return nil, fmt.Errorf("open zip: %w", err)
+	}
+	defer f.Close()
+
+	var buf bytes.Buffer
+	w := multipart.NewWriter(&buf)
+	part, err := w.CreateFormFile("zip", filepath.Base(zipPath))
+	if err != nil {
+		return nil, fmt.Errorf("create form: %w", err)
+	}
+	if _, err := io.Copy(part, f); err != nil {
+		return nil, fmt.Errorf("copy: %w", err)
+	}
+	w.Close()
+
+	req, err := http.NewRequestWithContext(ctx, "POST",
+		o.c.bdURL("/v1/bd/onboarding-imports"), &buf)
+	if err != nil {
+		return nil, fmt.Errorf("build request: %w", err)
+	}
+	req.Header.Set("Content-Type", w.FormDataContentType())
+	if o.c.cfg.Token != "" {
+		req.Header.Set("Authorization", "Bearer "+o.c.cfg.Token)
+	}
+	if o.c.cfg.OrgID != "" {
+		req.Header.Set("X-Org-Id", o.c.cfg.OrgID)
+	}
+
+	resp, err := o.c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request: %w", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode >= 400 {
+		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, truncateStr(string(body), 200))
+	}
+
+	var job ImportJob
+	if err := json.Unmarshal(body, &job); err != nil {
+		return nil, fmt.Errorf("decode: %w", err)
+	}
+	return &job, nil
+}
+
+// ImportStatus returns the status of a bulk import.
+func (o *OnboardingClient) ImportStatus(ctx context.Context, importID string) (*ImportJob, error) {
+	raw, _, err := o.c.do(ctx, "GET", o.c.bdURL("/v1/bd/onboarding-imports/"+importID), nil)
+	if err != nil {
+		return nil, err
+	}
+	var job ImportJob
+	if err := json.Unmarshal(raw, &job); err != nil {
+		return nil, fmt.Errorf("decode: %w", err)
+	}
+	return &job, nil
+}
+
+// DownloadImportResult downloads the result zip for a completed import.
+func (o *OnboardingClient) DownloadImportResult(ctx context.Context, importID, outPath string) error {
+	req, err := http.NewRequestWithContext(ctx, "GET",
+		o.c.bdURL("/v1/bd/onboarding-imports/"+importID+"/result.zip"), nil)
+	if err != nil {
+		return fmt.Errorf("build request: %w", err)
+	}
+	if o.c.cfg.Token != "" {
+		req.Header.Set("Authorization", "Bearer "+o.c.cfg.Token)
+	}
+	if o.c.cfg.OrgID != "" {
+		req.Header.Set("X-Org-Id", o.c.cfg.OrgID)
+	}
+
+	resp, err := o.c.http.Do(req)
+	if err != nil {
+		return fmt.Errorf("request: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, truncateStr(string(body), 200))
+	}
+
+	f, err := os.Create(outPath)
+	if err != nil {
+		return fmt.Errorf("create output: %w", err)
+	}
+	defer f.Close()
+	_, err = io.Copy(f, resp.Body)
+	return err
 }
