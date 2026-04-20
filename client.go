@@ -43,6 +43,7 @@ type Client struct {
 	Portfolio  *PortfolioClient
 	Orders     *OrdersClient
 	Trading    *TradingClient
+	Users      *UsersClient
 }
 
 // NewClient returns a configured platform client.
@@ -94,6 +95,7 @@ func NewClient(cfg Config) *Client {
 	c.Portfolio = &PortfolioClient{c: c}
 	c.Orders = &OrdersClient{c: c}
 	c.Trading = &TradingClient{c: c}
+	c.Users = &UsersClient{c: c}
 	return c
 }
 

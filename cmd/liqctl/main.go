@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	sdk "github.com/liquidityio/sdk-go"
 )
@@ -50,6 +51,14 @@ func main() {
 		cmdStatus(ctx, c, os.Args[3:])
 	case "seed":
 		cmdSeed(ctx, c, os.Args[3:])
+	case "import":
+		cmdImport(ctx, c, os.Args[3:])
+	case "import-status":
+		cmdImportStatus(ctx, c, os.Args[3:])
+	case "import-result":
+		cmdImportResult(ctx, c, os.Args[3:])
+	case "export":
+		cmdExport(ctx, c, os.Args[3:])
 	default:
 		fmt.Fprintf(os.Stderr, "unknown action: %s\n", action)
 		usage()
@@ -58,12 +67,16 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "Usage: liqctl user <create|onboard|status|seed> [flags]")
+	fmt.Fprintln(os.Stderr, "Usage: liqctl user <command> [flags]")
 	fmt.Fprintln(os.Stderr, "")
-	fmt.Fprintln(os.Stderr, "  create  --email <email> --first-name <name> --last-name <name> [--phone <phone>] [--country <cc>]")
-	fmt.Fprintln(os.Stderr, "  onboard --app-id <id> --step <identity|document|screen|submit> [--data <json>] [--file <path>] [--type <doc_type>]")
-	fmt.Fprintln(os.Stderr, "  status  --app-id <id>")
-	fmt.Fprintln(os.Stderr, "  seed    --from <users.json> --env <dev|test|main>")
+	fmt.Fprintln(os.Stderr, "  create         --email <email> --first-name <name> --last-name <name> [--phone <phone>]")
+	fmt.Fprintln(os.Stderr, "  onboard        --app-id <id> --step <identity|document|screen|submit> [--data <json>]")
+	fmt.Fprintln(os.Stderr, "  status         --app-id <id>")
+	fmt.Fprintln(os.Stderr, "  seed           --from <users.json> --env <dev|test|main>")
+	fmt.Fprintln(os.Stderr, "  import         --zip <users.zip> --env <dev|test|main>")
+	fmt.Fprintln(os.Stderr, "  import-status  <import_id>")
+	fmt.Fprintln(os.Stderr, "  import-result  <import_id> --out <results.zip>")
+	fmt.Fprintln(os.Stderr, "  export         <user-id-or-email> --out <export.zip> [--persist]")
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "Environment: LIQUIDITY_ENV, LIQUIDITY_TOKEN, LIQUIDITY_ORG_ID, BD_URL, TA_URL, ATS_URL")
 }
@@ -283,4 +296,89 @@ func printJSON(v any) {
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
 	enc.Encode(v)
+}
+
+func cmdImport(ctx context.Context, c *sdk.Client, args []string) {
+	flags := parseFlags(args)
+	zipPath := flags["zip"]
+	if zipPath == "" {
+		fmt.Fprintln(os.Stderr, "error: --zip is required")
+		os.Exit(1)
+	}
+
+	job, err := c.Onboarding.ImportZip(ctx, zipPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("Import started: %s (%d users)\n", job.ImportID, job.Count)
+
+	// Poll until done.
+	for job.Status == "processing" {
+		time.Sleep(2 * time.Second)
+		job, err = c.Onboarding.ImportStatus(ctx, job.ImportID)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error polling: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("  [%d/%d] succeeded=%d failed=%d\n",
+			job.Processed, job.Count, job.Succeeded, job.Failed)
+	}
+
+	fmt.Printf("\nImport %s: %d succeeded, %d failed\n", job.Status, job.Succeeded, job.Failed)
+}
+
+func cmdImportStatus(ctx context.Context, c *sdk.Client, args []string) {
+	if len(args) == 0 {
+		fmt.Fprintln(os.Stderr, "error: import_id required")
+		os.Exit(1)
+	}
+	importID := args[0]
+
+	job, err := c.Onboarding.ImportStatus(ctx, importID)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+	printJSON(job)
+}
+
+func cmdImportResult(ctx context.Context, c *sdk.Client, args []string) {
+	if len(args) == 0 {
+		fmt.Fprintln(os.Stderr, "error: import_id required")
+		os.Exit(1)
+	}
+	importID := args[0]
+	flags := parseFlags(args[1:])
+	outPath := flags["out"]
+	if outPath == "" {
+		outPath = "import-" + importID + "-results.zip"
+	}
+
+	if err := c.Onboarding.DownloadImportResult(ctx, importID, outPath); err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Printf("Downloaded to %s\n", outPath)
+}
+
+func cmdExport(ctx context.Context, c *sdk.Client, args []string) {
+	if len(args) == 0 {
+		fmt.Fprintln(os.Stderr, "error: user-id-or-email required")
+		os.Exit(1)
+	}
+	userID := args[0]
+	flags := parseFlags(args[1:])
+	outPath := flags["out"]
+	if outPath == "" {
+		outPath = "user-export-" + userID + ".zip"
+	}
+	persist := flags["persist"] == "true"
+
+	if err := c.Users.Export(ctx, userID, outPath, persist); err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Printf("Exported to %s\n", outPath)
 }
