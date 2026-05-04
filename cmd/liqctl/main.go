@@ -11,6 +11,7 @@
 //	liqctl user onboard --app-id <id> --step document --file ./dl.pdf --type drivers_license
 //	liqctl user onboard --app-id <id> --submit
 //	liqctl user seed --from ~/work/liquidity/state/devnet/users.json --env dev
+//	liqctl key rotate --org <slug> [--all-orgs] [--dry-run]
 package main
 
 import (
@@ -33,52 +34,65 @@ func main() {
 	resource := os.Args[1]
 	action := os.Args[2]
 
-	if resource != "user" {
-		fmt.Fprintf(os.Stderr, "unknown resource: %s\n", resource)
-		usage()
-		os.Exit(1)
-	}
-
-	c := sdk.NewClient(sdk.Config{})
-	ctx := context.Background()
-
-	switch action {
-	case "create":
-		cmdCreate(ctx, c, os.Args[3:])
-	case "onboard":
-		cmdOnboard(ctx, c, os.Args[3:])
-	case "status":
-		cmdStatus(ctx, c, os.Args[3:])
-	case "seed":
-		cmdSeed(ctx, c, os.Args[3:])
-	case "import":
-		cmdImport(ctx, c, os.Args[3:])
-	case "import-status":
-		cmdImportStatus(ctx, c, os.Args[3:])
-	case "import-result":
-		cmdImportResult(ctx, c, os.Args[3:])
-	case "export":
-		cmdExport(ctx, c, os.Args[3:])
+	switch resource {
+	case "user":
+		c := sdk.NewClient(sdk.Config{})
+		ctx := context.Background()
+		switch action {
+		case "create":
+			cmdCreate(ctx, c, os.Args[3:])
+		case "onboard":
+			cmdOnboard(ctx, c, os.Args[3:])
+		case "status":
+			cmdStatus(ctx, c, os.Args[3:])
+		case "seed":
+			cmdSeed(ctx, c, os.Args[3:])
+		case "import":
+			cmdImport(ctx, c, os.Args[3:])
+		case "import-status":
+			cmdImportStatus(ctx, c, os.Args[3:])
+		case "import-result":
+			cmdImportResult(ctx, c, os.Args[3:])
+		case "export":
+			cmdExport(ctx, c, os.Args[3:])
+		default:
+			fmt.Fprintf(os.Stderr, "unknown user action: %s\n", action)
+			usage()
+			os.Exit(1)
+		}
+	case "key":
+		switch action {
+		case "rotate":
+			cmdKeyRotate(os.Args[3:])
+		default:
+			fmt.Fprintf(os.Stderr, "unknown key action: %s\n", action)
+			usage()
+			os.Exit(1)
+		}
 	default:
-		fmt.Fprintf(os.Stderr, "unknown action: %s\n", action)
+		fmt.Fprintf(os.Stderr, "unknown resource: %s\n", resource)
 		usage()
 		os.Exit(1)
 	}
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "Usage: liqctl user <command> [flags]")
+	fmt.Fprintln(os.Stderr, "Usage: liqctl <resource> <action> [flags]")
 	fmt.Fprintln(os.Stderr, "")
-	fmt.Fprintln(os.Stderr, "  create         --email <email> --first-name <name> --last-name <name> [--phone <phone>]")
-	fmt.Fprintln(os.Stderr, "  onboard        --app-id <id> --step <identity|document|screen|submit> [--data <json>]")
-	fmt.Fprintln(os.Stderr, "  status         --app-id <id>")
-	fmt.Fprintln(os.Stderr, "  seed           --from <users.json> --env <dev|test|main>")
-	fmt.Fprintln(os.Stderr, "  import         --zip <users.zip> --env <dev|test|main>")
-	fmt.Fprintln(os.Stderr, "  import-status  <import_id>")
-	fmt.Fprintln(os.Stderr, "  import-result  <import_id> --out <results.zip>")
-	fmt.Fprintln(os.Stderr, "  export         <user-id-or-email> --out <export.zip> [--persist]")
+	fmt.Fprintln(os.Stderr, "user create         --email <email> --first-name <name> --last-name <name> [--phone <phone>]")
+	fmt.Fprintln(os.Stderr, "user onboard        --app-id <id> --step <identity|document|screen|submit> [--data <json>]")
+	fmt.Fprintln(os.Stderr, "user status         --app-id <id>")
+	fmt.Fprintln(os.Stderr, "user seed           --from <users.json> --env <dev|test|main>")
+	fmt.Fprintln(os.Stderr, "user import         --zip <users.zip> --env <dev|test|main>")
+	fmt.Fprintln(os.Stderr, "user import-status  <import_id>")
+	fmt.Fprintln(os.Stderr, "user import-result  <import_id> --out <results.zip>")
+	fmt.Fprintln(os.Stderr, "user export         <user-id-or-email> --out <export.zip> [--persist]")
+	fmt.Fprintln(os.Stderr, "key  rotate         --org <slug> [--all-orgs] [--dry-run] [--apply]")
+	fmt.Fprintln(os.Stderr, "                    Print rotation plan and run preflight checks. See")
+	fmt.Fprintln(os.Stderr, "                    universe/docs/internal/runbooks/key-rotation.md")
 	fmt.Fprintln(os.Stderr, "")
-	fmt.Fprintln(os.Stderr, "Environment: LIQUIDITY_ENV, LIQUIDITY_TOKEN, LIQUIDITY_ORG_ID, BD_URL, TA_URL, ATS_URL")
+	fmt.Fprintln(os.Stderr, "Environment: LIQUIDITY_ENV, LIQUIDITY_TOKEN, LIQUIDITY_ORG_ID, BD_URL, TA_URL, ATS_URL,")
+	fmt.Fprintln(os.Stderr, "             KMS_URL, KMS_TOKEN")
 }
 
 func cmdCreate(ctx context.Context, c *sdk.Client, args []string) {
