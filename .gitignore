@@ -1,0 +1,8 @@
+# Build artifacts
+liqctl
+/cmd/*/dist/
+*.test
+
+# IDE
+.vscode/
+.idea/
